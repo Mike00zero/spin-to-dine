@@ -1,10 +1,23 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Image } from 'expo-image';
-import { Animated, Linking, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  Linking,
+  PanResponder,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker } from 'react-native-maps';
 import { Photo } from '../components/RestaurantCard';
 import { Button, Chip, formatDistance, Price, Stars } from '../components/ui';
+import { fetchRestaurantDetails } from '../api/places';
 import { Cuisine, Restaurant } from '../types';
 import { colors, radius, shadow } from '../theme';
 
@@ -58,8 +71,28 @@ function useSwipeBack(width: number, onBack: () => void, isBlocked: (pageY: numb
   return { x, handlers: responder.panHandlers };
 }
 
-export function DetailsScreen({ restaurant: r, cuisine, onBack }: { restaurant: Restaurant; cuisine: Cuisine; onBack: () => void }) {
+export function DetailsScreen({ restaurant: initial, cuisine, onBack }: { restaurant: Restaurant; cuisine: Cuisine; onBack: () => void }) {
   const { width } = useWindowDimensions();
+  // Reviews, full hours, website and Maps links aren't in `initial` — they're fetched
+  // here, only for the one restaurant actually opened, to keep list searches cheap.
+  const [r, setR] = useState(initial);
+  const [detailsLoading, setDetailsLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setR(initial);
+    setDetailsLoading(true);
+    fetchRestaurantDetails(initial)
+      .then((full) => {
+        if (!cancelled) setR(full);
+      })
+      .catch(() => {}) // keep showing what we have; "No reviews yet" is a fine fallback
+      .finally(() => {
+        if (!cancelled) setDetailsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initial]);
   const photos = r.photos.length ? r.photos : [undefined];
   // Each Places photo is a billed request, so only load the page being shown and its
   // neighbours (ready to swipe to). Pages further away load once the user gets close.
@@ -197,7 +230,11 @@ export function DetailsScreen({ restaurant: r, cuisine, onBack }: { restaurant: 
           )}
 
           <Text style={styles.section}>What people are saying</Text>
-          {r.reviews.length === 0 && <Text style={styles.meta}>No reviews yet.</Text>}
+          {detailsLoading ? (
+            <ActivityIndicator color={colors.orange} style={{ marginTop: 8, alignSelf: 'flex-start' }} />
+          ) : (
+            r.reviews.length === 0 && <Text style={styles.meta}>No reviews yet.</Text>
+          )}
           {r.reviews.map((rev, i) => (
             <View key={i} style={styles.review}>
               <View style={styles.row}>

@@ -27,7 +27,11 @@ function localize(list: Restaurant[], near: Coords): Restaurant[] {
     .filter((r) => r.distanceKm <= MAX_DISTANCE_KM); // keep it local
 }
 
-const FIELD_MASK = [
+// Kept to the cheap fields the list/card UI actually shows. Reviews and full weekly
+// hours push a Places call into a pricier tier, and most search results are never
+// opened — so those fields are fetched separately, only for a restaurant someone
+// actually taps into (see fetchRestaurantDetails below).
+const LIST_FIELD_MASK = [
   'places.id',
   'places.displayName',
   'places.formattedAddress',
@@ -36,13 +40,17 @@ const FIELD_MASK = [
   'places.userRatingCount',
   'places.priceLevel',
   'places.photos',
-  'places.reviews',
-  'places.googleMapsUri',
-  'places.googleMapsLinks.reviewsUri',
-  'places.websiteUri',
   'places.currentOpeningHours.openNow',
-  'places.currentOpeningHours.weekdayDescriptions',
-  'places.regularOpeningHours.weekdayDescriptions',
+].join(',');
+
+// Place Details (New) field mask has no "places." prefix — it's one place, not a list.
+const DETAILS_FIELD_MASK = [
+  'reviews',
+  'googleMapsUri',
+  'googleMapsLinks.reviewsUri',
+  'websiteUri',
+  'currentOpeningHours.weekdayDescriptions',
+  'regularOpeningHours.weekdayDescriptions',
 ].join(',');
 
 const PRICE_LEVELS: Record<string, number | null> = {
@@ -67,6 +75,16 @@ export function distanceKm(a: Coords, b: Coords): number {
 
 function photoUrl(photoName: string, width = 800) {
   return `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=${width}&key=${API_KEY}`;
+}
+
+function mapReviews(raw: any[] | undefined): Review[] {
+  return (raw ?? []).map((r: any) => ({
+    author: r.authorAttribution?.displayName ?? 'Google user',
+    authorPhoto: r.authorAttribution?.photoUri,
+    rating: r.rating ?? 0,
+    when: r.relativePublishTimeDescription ?? '',
+    text: r.text?.text ?? r.originalText?.text ?? '',
+  }));
 }
 
 /** Highest rated first; ties broken by distance (nearest to the user first). */
@@ -118,7 +136,7 @@ async function fetchFromGoogle(cuisine: Cuisine, near: Coords): Promise<Restaura
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': API_KEY,
-      'X-Goog-FieldMask': FIELD_MASK,
+      'X-Goog-FieldMask': LIST_FIELD_MASK,
     },
     body: JSON.stringify({
       textQuery: cuisine.query,
@@ -141,13 +159,6 @@ async function fetchFromGoogle(cuisine: Cuisine, near: Coords): Promise<Restaura
     .filter((p) => p.location)
     .map((p) => {
       const location: Coords = { latitude: p.location.latitude, longitude: p.location.longitude };
-      const reviews: Review[] = (p.reviews ?? []).map((r: any) => ({
-        author: r.authorAttribution?.displayName ?? 'Google user',
-        authorPhoto: r.authorAttribution?.photoUri,
-        rating: r.rating ?? 0,
-        when: r.relativePublishTimeDescription ?? '',
-        text: r.text?.text ?? r.originalText?.text ?? '',
-      }));
       return {
         id: p.id,
         cuisineId: cuisine.id,
@@ -158,13 +169,12 @@ async function fetchFromGoogle(cuisine: Cuisine, near: Coords): Promise<Restaura
         ratingCount: p.userRatingCount ?? 0,
         priceLevel: p.priceLevel ? PRICE_LEVELS[p.priceLevel] ?? null : null,
         photos: (p.photos ?? []).slice(0, 6).map((ph: any) => photoUrl(ph.name)),
-        reviews,
+        // Reviews and full hours are fetched lazily — see fetchRestaurantDetails.
+        reviews: [],
         openNow: p.currentOpeningHours?.openNow,
-        // This week's hours (includes holiday changes); fall back to the usual schedule.
-        hours: p.currentOpeningHours?.weekdayDescriptions ?? p.regularOpeningHours?.weekdayDescriptions,
-        mapsUrl: p.googleMapsUri,
-        reviewsUrl: p.googleMapsLinks?.reviewsUri,
-        websiteUrl: p.websiteUri,
+        mapsUrl: undefined,
+        reviewsUrl: undefined,
+        websiteUrl: undefined,
         distanceKm: distanceKm(near, location),
       };
     })
@@ -195,4 +205,42 @@ export async function searchAllRestaurants(near: Coords, opts: SearchOptions = {
     }
   }
   return sortByRating(merged);
+}
+
+/**
+ * Fills in a restaurant's reviews, full hours, website, and Maps links — the fields
+ * left out of the list search to keep it cheap. Call this when a restaurant's details
+ * page is opened; the result is cached per restaurant like a normal search.
+ */
+export async function fetchRestaurantDetails(restaurant: Restaurant, opts: SearchOptions = {}): Promise<Restaurant> {
+  if (isDemoMode) return restaurant; // demo data already has reviews/hours baked in
+  const extra = await cached(`places:details:${restaurant.id}`, CACHE_TTL_MS, () => fetchDetailsFromGoogle(restaurant.id), opts);
+  return { ...restaurant, ...extra };
+}
+
+type RestaurantDetails = Pick<Restaurant, 'reviews' | 'hours' | 'mapsUrl' | 'reviewsUrl' | 'websiteUrl'>;
+
+/** One uncached Places Details (New) request for a single place's expensive fields. */
+async function fetchDetailsFromGoogle(placeId: string): Promise<RestaurantDetails> {
+  const res = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
+    headers: {
+      'X-Goog-Api-Key': API_KEY,
+      'X-Goog-FieldMask': DETAILS_FIELD_MASK,
+    },
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Google Places error ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  const p = await res.json();
+  return {
+    reviews: mapReviews(p.reviews),
+    // This week's hours (includes holiday changes); fall back to the usual schedule.
+    hours: p.currentOpeningHours?.weekdayDescriptions ?? p.regularOpeningHours?.weekdayDescriptions,
+    mapsUrl: p.googleMapsUri,
+    reviewsUrl: p.googleMapsLinks?.reviewsUri,
+    websiteUrl: p.websiteUri,
+  };
 }
