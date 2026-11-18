@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { Cuisine, Restaurant } from '../types';
 import { colors, radius, shadow } from '../theme';
 import { formatDistance, Price, Stars } from './ui';
+import { HeartButton } from './HeartButton';
 
 /**
  * Places photo URLs carry the API key; leave it out of the cache key so the cached
@@ -51,11 +52,14 @@ export function RestaurantCard({
   rank,
   cuisine,
   onPress,
+  onLockedFavorite,
 }: {
   restaurant: Restaurant;
   rank: number;
   cuisine: Cuisine;
   onPress: () => void;
+  /** Called instead of saving when Favorites isn't unlocked (opens the paywall). */
+  onLockedFavorite: () => void;
 }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.card, { opacity: pressed ? 0.9 : 1 }]}>
@@ -64,6 +68,7 @@ export function RestaurantCard({
         <View style={styles.rank}>
           <Text style={styles.rankText}>#{rank}</Text>
         </View>
+        <HeartButton restaurant={r} onLockedPress={onLockedFavorite} size={32} style={styles.heart} />
       </View>
       <View style={styles.body}>
         <Text style={styles.name} numberOfLines={1}>
@@ -105,6 +110,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   rankText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  heart: { position: 'absolute', top: 10, right: 10 },
   body: { paddingHorizontal: 6, paddingTop: 10, paddingBottom: 4 },
   name: { fontSize: 18, fontWeight: '800', color: colors.ink },
   row: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' },

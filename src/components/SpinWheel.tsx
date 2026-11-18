@@ -1,18 +1,38 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Animated, Easing, Image, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import Svg, { Defs, LinearGradient, Polygon, Stop } from 'react-native-svg';
+import Svg, { Circle, Defs, LinearGradient, Path, Polygon, RadialGradient, Stop } from 'react-native-svg';
 import { AudioPlayer, createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { CUISINES, SEGMENT_DEGREES } from '../cuisines';
 import { Cuisine } from '../types';
+import { WHEEL_THEMES, WheelTheme } from '../pro/wheelThemes';
 
 export type SpinWheelHandle = { spin: () => void };
 
 type Props = {
   size: number;
+  theme?: WheelTheme;
   onSpinStart?: () => void;
   onResult: (cuisine: Cuisine) => void;
 };
+
+const DEFAULT_THEME = WHEEL_THEMES[0]; // Classic — used if no theme prop is given
+
+/**
+ * The wheel is drawn as SVG wedges (not an image), so colors — and whole themes — are
+ * real, live values rather than baked pixels. `angleDeg` is measured clockwise from
+ * 12 o'clock, matching the spin math below (`SEGMENT_DEGREES`, wedge centers, etc).
+ */
+function wedgePoint(angleDeg: number, radius: number, cx: number, cy: number) {
+  const rad = (angleDeg * Math.PI) / 180;
+  return { x: cx + radius * Math.sin(rad), y: cy - radius * Math.cos(rad) };
+}
+
+function wedgePath(startDeg: number, endDeg: number, radius: number, cx: number, cy: number) {
+  const start = wedgePoint(startDeg, radius, cx, cy);
+  const end = wedgePoint(endDeg, radius, cx, cy);
+  return `M ${cx},${cy} L ${start.x},${start.y} A ${radius},${radius} 0 0,1 ${end.x},${end.y} Z`;
+}
 
 const SPIN_MS = 10000;
 // Fast launch, then a long coast with a drawn-out crawl over the last few wedges,
@@ -138,7 +158,7 @@ function useTickPool() {
   };
 }
 
-export const SpinWheel = forwardRef<SpinWheelHandle, Props>(({ size, onSpinStart, onResult }, ref) => {
+export const SpinWheel = forwardRef<SpinWheelHandle, Props>(({ size, theme = DEFAULT_THEME, onSpinStart, onResult }, ref) => {
   const rotation = useRef(new Animated.Value(0)).current;
   const flapper = useRef(new Animated.Value(0)).current;
   const total = useRef(0); // cumulative degrees, so every spin keeps going forward
@@ -222,11 +242,81 @@ export const SpinWheel = forwardRef<SpinWheelHandle, Props>(({ size, onSpinStart
     outputRange: ['0deg', '360deg'],
   });
 
+  // Wedge geometry in a fixed 200×200 viewBox; label positions are converted to actual
+  // pixels (proportional to `size`) since the emoji are plain <Text>, not SVG text —
+  // far more reliable emoji rendering than SvgText across iOS/Android.
+  const VB = 200;
+  const CENTER = VB / 2;
+  const RADIUS = 96;
+  const wedges = CUISINES.map((cuisine, i) => {
+    const start = i * SEGMENT_DEGREES;
+    const end = start + SEGMENT_DEGREES;
+    const mid = start + SEGMENT_DEGREES / 2;
+    const label = wedgePoint(mid, RADIUS * 0.7, CENTER, CENTER);
+    return {
+      cuisine,
+      path: wedgePath(start, end, RADIUS, CENTER, CENTER),
+      color: theme.wedgeColors[cuisine.id] ?? cuisine.color,
+      labelX: (label.x / VB) * size,
+      labelY: (label.y / VB) * size,
+    };
+  });
+  const labelBox = size * 0.17;
+  const HUB_RADIUS = 32; // viewBox units
+  const hubBox = ((HUB_RADIUS * 2) / VB) * size * 0.8; // slightly inside the hub circle
+
   return (
     <View style={{ width: size, height: size + POINTER_OVERHANG, alignItems: 'center' }}>
       <Pressable onPress={spin} accessibilityRole="button" accessibilityLabel="Spin the food wheel" style={{ marginTop: POINTER_OVERHANG }}>
         <Animated.View style={{ width: size, height: size, transform: [{ rotate }] }}>
-          <Image source={require('../../assets/wheel.png')} style={{ width: size, height: size }} resizeMode="contain" />
+          <Svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`}>
+            <Defs>
+              <RadialGradient id="wheelSheen" cx="35%" cy="25%" r="65%">
+                <Stop offset="0" stopColor="#FFFFFF" stopOpacity={0.35} />
+                <Stop offset="1" stopColor="#FFFFFF" stopOpacity={0} />
+              </RadialGradient>
+            </Defs>
+            {wedges.map((w) => (
+              <Path key={w.cuisine.id} d={w.path} fill={w.color} stroke={theme.rim} strokeWidth={1.5} />
+            ))}
+            {/* Glossy highlight, then the outer rim and center hub on top. */}
+            <Circle cx={CENTER} cy={CENTER} r={RADIUS} fill="url(#wheelSheen)" />
+            <Circle cx={CENTER} cy={CENTER} r={RADIUS} fill="none" stroke={theme.rim} strokeWidth={3} />
+            <Circle cx={CENTER} cy={CENTER} r={HUB_RADIUS} fill={theme.hub} stroke={theme.rim} strokeWidth={3} />
+          </Svg>
+          {wedges.map((w) => (
+            <Text
+              key={w.cuisine.id}
+              style={[
+                styles.wedgeLabel,
+                {
+                  width: labelBox,
+                  height: labelBox,
+                  fontSize: labelBox * 0.72,
+                  lineHeight: labelBox,
+                  left: w.labelX - labelBox / 2,
+                  top: w.labelY - labelBox / 2,
+                },
+              ]}
+            >
+              {w.cuisine.emoji}
+            </Text>
+          ))}
+          <Text
+            style={[
+              styles.wedgeLabel,
+              {
+                width: hubBox,
+                height: hubBox,
+                fontSize: hubBox * 0.68,
+                lineHeight: hubBox,
+                left: size / 2 - hubBox / 2,
+                top: size / 2 - hubBox / 2,
+              },
+            ]}
+          >
+            🎲
+          </Text>
         </Animated.View>
       </Pressable>
       {/* Pointer at 12 o'clock */}
@@ -246,4 +336,7 @@ export const SpinWheel = forwardRef<SpinWheelHandle, Props>(({ size, onSpinStart
 const styles = StyleSheet.create({
   // Sized to the pointer and pivoting at its top so it flicks like a flapper.
   pointerWrap: { position: 'absolute', top: 0, width: POINTER, height: POINTER, transformOrigin: 'top' },
+  // lineHeight (set per-instance, matching box height) is what actually centers emoji
+  // vertically — textAlignVertical alone doesn't reliably center a single-line emoji glyph.
+  wedgeLabel: { position: 'absolute', textAlign: 'center' },
 });

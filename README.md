@@ -56,11 +56,11 @@ To show real places, add a Google key (next section).
 | Screens: spin → results (list/map) → restaurant details | `src/screens/` |
 | Colors | `src/theme.ts` |
 
-**Changing the wheel:** the artwork is `assets/wheel.png`. The 8 entries in
-`src/cuisines.ts` must stay in the same clockwise order as the wedges, starting
-at 12 o'clock (Steak, Comfort Food, Chicken, Mexican, Chinese, Sushi, Burgers, Pizza).
-To rename a wedge or change what gets searched (e.g. make the bowl "Bar Food"),
-edit its `label` and `query`.
+**Changing the wheel:** the wheel is drawn in code (`src/components/SpinWheel.tsx`),
+not a baked image — wedge colors, labels, and order all come from `src/cuisines.ts`,
+in any order you like. Wheel color themes (free "Classic" plus Pro options) live in
+`src/pro/wheelThemes.ts`. To rename a wedge or change what gets searched (e.g. make
+the bowl "Bar Food"), edit its `label` and `query`.
 
 **Search area:** about 5 miles around the user (`SEARCH_RADIUS_METERS` in `places.ts`).
 If location permission is denied, the app falls back to Times Square, NYC

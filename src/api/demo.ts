@@ -5,7 +5,7 @@ import { Coords, Cuisine, Restaurant } from '../types';
 
 const NAME_PARTS: Record<string, string[]> = {
   steak: ['Prime Cut', 'The Ember Room', 'Ironwood Grill', 'Sizzle & Sear', 'Butcher Block', 'Rancher’s Table'],
-  comfort: ['Mama’s Kitchen', 'The Cozy Plate', 'Golden Fry House', 'Main Street Diner', 'Tater & Co.', 'Sunday Supper'],
+  italian: ['Bella Notte', 'Trattoria Rosso', 'Via Roma', 'Nonna’s Table', 'Piazza Milano', 'Luigi’s Kitchen'],
   chicken: ['Cluck Yeah', 'Crispy Coop', 'The Wing Spot', 'Golden Drumstick', 'Hen House', 'Fry Bird'],
   mexican: ['Taco Fiesta', 'La Cocina Verde', 'El Sol Taqueria', 'Casa Lupita', 'Salsa Shack', 'Tres Amigos'],
   chinese: ['Golden Dragon', 'Lucky Wok', 'Jade Garden', 'Panda Palace', 'Red Lantern', 'Bamboo House'],

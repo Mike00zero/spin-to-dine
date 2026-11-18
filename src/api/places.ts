@@ -6,25 +6,29 @@ import { cached, pruneCache } from './cache';
 const API_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_KEY ?? '';
 export const isDemoMode = !API_KEY;
 
-const SEARCH_RADIUS_METERS = 8000; // ~5 miles
-const MAX_DISTANCE_KM = (SEARCH_RADIUS_METERS / 1000) * 2;
+export const DEFAULT_RADIUS_METERS = 8000; // ~5 miles
+/** Results are allowed a bit past the search radius itself, since Google's own bias
+ * circle is a soft hint, not a hard cutoff — this is the real, enforced cutoff. */
+const maxDistanceKm = (radiusMeters: number) => (radiusMeters / 1000) * 2;
 
-// Caching: results are reused for CACHE_TTL_MS for the same cuisine within the same
-// ~1 km grid cell (lat/lng rounded to 2 decimals), so small GPS drift still hits the cache.
-// Kept short because "Open now" comes from the response and goes stale.
+// Caching: results are reused for CACHE_TTL_MS for the same cuisine + dietary filter +
+// radius, within the same ~1 km grid cell (lat/lng rounded to 2 decimals), so small GPS
+// drift still hits the cache. Kept short because "Open now" comes from the response and
+// goes stale.
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const CACHE_PRUNE_MS = 24 * 60 * 60 * 1000; // expired entries are removed from disk after a day
 let pruned = false;
 
-function cacheKey(cuisine: Cuisine, near: Coords) {
-  return `places:${cuisine.id}:${near.latitude.toFixed(2)},${near.longitude.toFixed(2)}`;
+function cacheKey(cuisine: Cuisine, near: Coords, dietary: string | null, radiusMeters: number) {
+  return `places:${cuisine.id}:${dietary ?? 'any'}:${radiusMeters}:${near.latitude.toFixed(2)},${near.longitude.toFixed(2)}`;
 }
 
 /** Distances in cached results were measured from wherever the user was then; redo them for now. */
-function localize(list: Restaurant[], near: Coords): Restaurant[] {
+function localize(list: Restaurant[], near: Coords, radiusMeters: number): Restaurant[] {
+  const limit = maxDistanceKm(radiusMeters);
   return list
     .map((r) => ({ ...r, distanceKm: distanceKm(near, r.location) }))
-    .filter((r) => r.distanceKm <= MAX_DISTANCE_KM); // keep it local
+    .filter((r) => r.distanceKm <= limit); // keep it local
 }
 
 // Kept to the cheap fields the list/card UI actually shows. Reviews and full weekly
@@ -110,13 +114,22 @@ export function sortRestaurants(list: Restaurant[], mode: SortMode): Restaurant[
   }
 }
 
-export type SearchOptions = { /** skip the cache and fetch fresh results (pull-to-refresh) */ force?: boolean };
+export type SearchOptions = {
+  /** skip the cache and fetch fresh results (pull-to-refresh) */
+  force?: boolean;
+  /** Dietary keyword layered onto the cuisine query, e.g. "vegetarian" (Pro). */
+  dietary?: string | null;
+  /** Overrides DEFAULT_RADIUS_METERS (Pro). */
+  radiusMeters?: number;
+};
 
 /**
  * Find restaurants of a cuisine near the user using the Google Places API (New)
  * Text Search endpoint, cached (see CACHE_TTL_MS). Falls back to demo data when no API key is set.
  */
 export async function searchRestaurants(cuisine: Cuisine, near: Coords, opts: SearchOptions = {}): Promise<Restaurant[]> {
+  const dietary = opts.dietary ?? null;
+  const radiusMeters = opts.radiusMeters ?? DEFAULT_RADIUS_METERS;
   if (isDemoMode) {
     await new Promise((r) => setTimeout(r, 600));
     return sortByRating(demoRestaurants(cuisine, near));
@@ -125,12 +138,17 @@ export async function searchRestaurants(cuisine: Cuisine, near: Coords, opts: Se
     pruned = true;
     pruneCache(CACHE_PRUNE_MS);
   }
-  const list = await cached(cacheKey(cuisine, near), CACHE_TTL_MS, () => fetchFromGoogle(cuisine, near), opts);
-  return sortByRating(localize(list, near));
+  const list = await cached(
+    cacheKey(cuisine, near, dietary, radiusMeters),
+    CACHE_TTL_MS,
+    () => fetchFromGoogle(cuisine, near, dietary, radiusMeters),
+    opts,
+  );
+  return sortByRating(localize(list, near, radiusMeters));
 }
 
 /** One uncached Places Text Search request. */
-async function fetchFromGoogle(cuisine: Cuisine, near: Coords): Promise<Restaurant[]> {
+async function fetchFromGoogle(cuisine: Cuisine, near: Coords, dietary: string | null, radiusMeters: number): Promise<Restaurant[]> {
   const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
     method: 'POST',
     headers: {
@@ -139,10 +157,10 @@ async function fetchFromGoogle(cuisine: Cuisine, near: Coords): Promise<Restaura
       'X-Goog-FieldMask': LIST_FIELD_MASK,
     },
     body: JSON.stringify({
-      textQuery: cuisine.query,
+      textQuery: dietary ? `${dietary} ${cuisine.query}` : cuisine.query,
       pageSize: 20,
       locationBias: {
-        circle: { center: near, radius: SEARCH_RADIUS_METERS },
+        circle: { center: near, radius: radiusMeters },
       },
     }),
   });
@@ -178,7 +196,7 @@ async function fetchFromGoogle(cuisine: Cuisine, near: Coords): Promise<Restaura
         distanceKm: distanceKm(near, location),
       };
     })
-    .filter((r) => r.distanceKm <= MAX_DISTANCE_KM);
+    .filter((r) => r.distanceKm <= maxDistanceKm(radiusMeters));
 
   return restaurants;
 }
