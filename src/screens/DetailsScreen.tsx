@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker } from 'react-native-maps';
 import { Photo } from '../components/RestaurantCard';
+import { HeartButton } from '../components/HeartButton';
 import { Button, Chip, formatDistance, Price, Stars } from '../components/ui';
 import { fetchRestaurantDetails } from '../api/places';
 import { Cuisine, Restaurant } from '../types';
@@ -71,7 +72,18 @@ function useSwipeBack(width: number, onBack: () => void, isBlocked: (pageY: numb
   return { x, handlers: responder.panHandlers };
 }
 
-export function DetailsScreen({ restaurant: initial, cuisine, onBack }: { restaurant: Restaurant; cuisine: Cuisine; onBack: () => void }) {
+export function DetailsScreen({
+  restaurant: initial,
+  cuisine,
+  onBack,
+  onPro,
+}: {
+  restaurant: Restaurant;
+  cuisine: Cuisine;
+  onBack: () => void;
+  /** Opens the paywall — passed to the save heart. */
+  onPro: () => void;
+}) {
   const { width } = useWindowDimensions();
   // Reviews, full hours, website and Maps links aren't in `initial` — they're fetched
   // here, only for the one restaurant actually opened, to keep list searches cheap.
@@ -148,6 +160,7 @@ export function DetailsScreen({ restaurant: initial, cuisine, onBack }: { restau
             <Pressable onPress={onBack} style={styles.backBtn} hitSlop={10}>
               <Text style={styles.backText}>‹ Back</Text>
             </Pressable>
+            <HeartButton restaurant={r} onLockedPress={onPro} size={36} style={{ marginTop: 10, marginRight: 10 }} />
           </SafeAreaView>
           {r.photos.length > 1 && (
             <View style={styles.photoCount}>
@@ -277,7 +290,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.cream },
   // Soft shadow on the left edge, visible while the page is dragged aside.
   edgeShadow: { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 12, shadowOffset: { width: -4, height: 0 }, elevation: 8 },
-  backWrap: { position: 'absolute', top: 0, left: 0, right: 0 },
+  backWrap: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-between' },
   backBtn: {
     marginLeft: 12,
     marginTop: 6,

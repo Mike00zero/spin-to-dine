@@ -8,7 +8,10 @@ import { Button, formatDistance } from '../components/ui';
 import { DiceDuel } from '../components/games/DiceDuel';
 import { HighCard } from '../components/games/HighCard';
 import { TicTacToe } from '../components/games/TicTacToe';
+import { RockPaperScissors } from '../components/games/RockPaperScissors';
+import { CoinFlip } from '../components/games/CoinFlip';
 import { GAMES, GameId, Player, PlayerIndex } from '../components/games/types';
+import { usePro } from '../pro/purchases';
 import { Coords, Cuisine, Restaurant } from '../types';
 import { colors, radius, shadow } from '../theme';
 
@@ -24,13 +27,16 @@ type Step =
 
 const PLAYER_COLORS = [colors.orange, colors.navy];
 
-/** Best of 3: first to this many round wins takes the battle. */
-const WINS_NEEDED = 2;
-const MAX_ROUNDS = WINS_NEEDED * 2 - 1;
+/** "Best of N": first to `winsNeeded` round wins takes the battle. Best of 5 is Pro. */
+const BATTLE_FORMATS: { winsNeeded: number; label: string; pro: boolean }[] = [
+  { winsNeeded: 2, label: 'Best of 3', pro: false },
+  { winsNeeded: 3, label: 'Best of 5', pro: true },
+];
 
-/** A random order of the games, so each round of a match plays a different one. */
-function shuffledGames(): GameId[] {
-  const ids = GAMES.map((g) => g.id);
+/** A random order of the given games, so each round of a match plays a different one
+ * (until the pool runs out, then it cycles). */
+function shuffledGames(pool: GameId[]): GameId[] {
+  const ids = [...pool];
   for (let i = ids.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [ids[i], ids[j]] = [ids[j], ids[i]];
@@ -44,6 +50,8 @@ type Props = {
   onCuisine: (c: Cuisine) => void;
   /** `list` is every restaurant loaded for the battle, so "back" from details lands on it. */
   onRestaurant: (r: Restaurant, list: Restaurant[]) => void;
+  /** Opens the paywall — used by the locked extra games and the Best of 5 option. */
+  onPro: () => void;
 };
 
 function pickId(p: Pick) {
@@ -56,23 +64,33 @@ function pickLabel(p: Pick) {
   return p.kind === 'cuisine' ? p.cuisine.label : p.restaurant.name;
 }
 
-export function BattleScreen({ coords, onBack, onCuisine, onRestaurant }: Props) {
+export function BattleScreen({ coords, onBack, onCuisine, onRestaurant, onPro }: Props) {
+  const { isPro } = usePro();
+  const availableGameIds = useMemo(() => GAMES.filter((g) => !g.pro || isPro).map((g) => g.id), [isPro]);
   const [names, setNames] = useState(['', '']);
   const [mode, setMode] = useState<Mode>('cuisine');
+  const [format, setFormat] = useState(BATTLE_FORMATS[0]);
   const [step, setStep] = useState<Step>({ name: 'setup' });
   const [picks, setPicks] = useState<[Pick | null, Pick | null]>([null, null]);
   // The match: one game per round, and who won each round so far.
-  const [order, setOrder] = useState<GameId[]>(shuffledGames);
+  const [order, setOrder] = useState<GameId[]>(() => shuffledGames(availableGameIds));
   const [rounds, setRounds] = useState<PlayerIndex[]>([]);
   const [gameKey, setGameKey] = useState(0); // remounts the game for each round
   const score: [number, number] = [rounds.filter((w) => w === 0).length, rounds.filter((w) => w === 1).length];
   const round = rounds.length + 1;
+  const maxRounds = format.winsNeeded * 2 - 1;
   const game = order[(round - 1) % order.length];
   const gameInfo = GAMES.find((g) => g.id === game)!;
   const lastRoundWinner = rounds.length ? rounds[rounds.length - 1] : null;
 
+  // If Pro was active when the match started but isn't anymore, drop back to a free
+  // format/pool rather than leaving a match stuck on a format no longer available.
+  useEffect(() => {
+    if (format.pro && !isPro) setFormat(BATTLE_FORMATS[0]);
+  }, [isPro, format.pro]);
+
   const resetMatch = () => {
-    setOrder(shuffledGames());
+    setOrder(shuffledGames(availableGameIds));
     setRounds([]);
     setGameKey((k) => k + 1);
   };
@@ -82,7 +100,7 @@ export function BattleScreen({ coords, onBack, onCuisine, onRestaurant }: Props)
     setRounds(next);
     setGameKey((k) => k + 1);
     const wins = next.filter((x) => x === w).length;
-    if (wins >= WINS_NEEDED || next.length >= MAX_ROUNDS) setStep({ name: 'winner', winner: w });
+    if (wins >= format.winsNeeded || next.length >= maxRounds) setStep({ name: 'winner', winner: w });
     else setStep({ name: 'versus' }); // scoreboard + next round's game
   };
 
@@ -185,12 +203,37 @@ export function BattleScreen({ coords, onBack, onCuisine, onRestaurant }: Props)
             ))}
           </View>
 
-          <Text style={styles.label}>Best of 3 · first to 2 wins</Text>
-          {GAMES.map((g) => (
-            <Text key={g.id} style={styles.gameLine}>
-              {g.emoji}  <Text style={{ fontWeight: '800', color: colors.ink }}>{g.name}</Text> · {g.blurb}
-            </Text>
-          ))}
+          <Text style={styles.label}>Match length</Text>
+          <View style={styles.segment}>
+            {BATTLE_FORMATS.map((f) => {
+              const locked = f.pro && !isPro;
+              return (
+                <Pressable
+                  key={f.label}
+                  onPress={() => (locked ? onPro() : setFormat(f))}
+                  style={[styles.segBtn, format.label === f.label && styles.segActive]}
+                >
+                  <Text style={[styles.segText, format.label === f.label && styles.segTextActive]}>
+                    {f.label}
+                    {locked ? ' 🔒' : ''}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={styles.label}>Games in the mix</Text>
+          {GAMES.map((g) => {
+            const locked = g.pro && !isPro;
+            return (
+              <Pressable key={g.id} onPress={locked ? onPro : undefined} disabled={!locked}>
+                <Text style={[styles.gameLine, locked && { opacity: 0.55 }]}>
+                  {g.emoji} <Text style={{ fontWeight: '800', color: colors.ink }}>{g.name}</Text> · {g.blurb}
+                  {locked ? '  🔒 Pro' : ''}
+                </Text>
+              </Pressable>
+            );
+          })}
 
           <Button title="Start battle" onPress={() => setStep({ name: 'pick', player: 0 })} style={{ marginTop: 24 }} />
         </ScrollView>
@@ -227,14 +270,14 @@ export function BattleScreen({ coords, onBack, onCuisine, onRestaurant }: Props)
               {players[lastRoundWinner].name} takes round {rounds.length}!
             </Text>
           )}
-          <Scoreboard players={players} score={score} rounds={rounds} />
+          <Scoreboard players={players} score={score} rounds={rounds} winsNeeded={format.winsNeeded} />
           <PickCard player={players[0]} pick={picks[0]} />
           <Text style={styles.vs}>VS</Text>
           <PickCard player={players[1]} pick={picks[1]} />
           <View style={styles.gameAnnounce}>
             <Text style={styles.gameKicker}>
               ROUND {round}
-              {score[0] === WINS_NEEDED - 1 && score[1] === WINS_NEEDED - 1 ? ' · DECIDER' : ''}
+              {score[0] === format.winsNeeded - 1 && score[1] === format.winsNeeded - 1 ? ' · DECIDER' : ''}
             </Text>
             <Text style={styles.gameName}>
               {gameInfo.emoji} {gameInfo.name}
@@ -252,12 +295,14 @@ export function BattleScreen({ coords, onBack, onCuisine, onRestaurant }: Props)
       {step.name === 'game' && (
         <ScrollView contentContainerStyle={[styles.body, { alignItems: 'center' }]}>
           <Text style={styles.gameKicker}>
-            ROUND {round} OF {MAX_ROUNDS}
+            ROUND {round} OF {maxRounds}
           </Text>
-          <Scoreboard players={players} score={score} rounds={rounds} />
+          <Scoreboard players={players} score={score} rounds={rounds} winsNeeded={format.winsNeeded} />
           {game === 'tictactoe' && <TicTacToe key={gameKey} players={players} onWinner={roundWon} />}
           {game === 'dice' && <DiceDuel key={gameKey} players={players} onWinner={roundWon} />}
           {game === 'card' && <HighCard key={gameKey} players={players} onWinner={roundWon} />}
+          {game === 'rps' && <RockPaperScissors key={gameKey} players={players} onWinner={roundWon} />}
+          {game === 'coin' && <CoinFlip key={gameKey} players={players} onWinner={roundWon} />}
         </ScrollView>
       )}
 
@@ -273,9 +318,9 @@ export function BattleScreen({ coords, onBack, onCuisine, onRestaurant }: Props)
             <>
               <Text style={styles.trophy}>🏆</Text>
               <Text style={[styles.winTitle, { color: players[step.winner].color }]}>{players[step.winner].name} wins!</Text>
-              <Scoreboard players={players} score={score} rounds={rounds} />
+              <Scoreboard players={players} score={score} rounds={rounds} winsNeeded={format.winsNeeded} />
               <Text style={styles.finalScore}>
-                {Math.max(...score)}–{Math.min(...score)} in the best of 3
+                {Math.max(...score)}–{Math.min(...score)} in the {format.label.toLowerCase()}
               </Text>
               <Text style={styles.lead}>
                 Sorry {players[step.winner === 0 ? 1 : 0].name}, you're having {pickLabel(picks[step.winner]!)}.
@@ -299,7 +344,7 @@ export function BattleScreen({ coords, onBack, onCuisine, onRestaurant }: Props)
             );
           })()}
           {step.winner !== null && (
-            <Button title="Rematch (best of 3)" variant="secondary" onPress={rematch} style={{ alignSelf: 'stretch', marginTop: 10 }} />
+            <Button title={`Rematch (${format.label.toLowerCase()})`} variant="secondary" onPress={rematch} style={{ alignSelf: 'stretch', marginTop: 10 }} />
           )}
           <Button title="New battle" variant="secondary" onPress={startOver} style={{ alignSelf: 'stretch', marginTop: 10 }} />
         </ScrollView>
@@ -309,7 +354,17 @@ export function BattleScreen({ coords, onBack, onCuisine, onRestaurant }: Props)
 }
 
 /** Both players' round wins, with one dot per round slot (filled = round won). */
-function Scoreboard({ players, score, rounds }: { players: [Player, Player]; score: [number, number]; rounds: PlayerIndex[] }) {
+function Scoreboard({
+  players,
+  score,
+  rounds,
+  winsNeeded,
+}: {
+  players: [Player, Player];
+  score: [number, number];
+  rounds: PlayerIndex[];
+  winsNeeded: number;
+}) {
   return (
     <View style={styles.scoreboard}>
       {players.map((p, i) => (
@@ -318,7 +373,7 @@ function Scoreboard({ players, score, rounds }: { players: [Player, Player]; sco
             {p.name}
           </Text>
           <View style={styles.scoreDots}>
-            {Array.from({ length: WINS_NEEDED }, (_, d) => (
+            {Array.from({ length: winsNeeded }, (_, d) => (
               <View key={d} style={[styles.scoreDot, { borderColor: p.color }, d < score[i] && { backgroundColor: p.color }]} />
             ))}
           </View>

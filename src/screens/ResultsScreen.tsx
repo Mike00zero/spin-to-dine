@@ -1,13 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Callout, Marker } from 'react-native-maps';
-import { isDemoMode, searchAllRestaurants, searchRestaurants, sortRestaurants } from '../api/places';
+import { DEFAULT_RADIUS_METERS, isDemoMode, searchAllRestaurants, searchRestaurants, sortRestaurants } from '../api/places';
 import { CUISINES, cuisineById } from '../cuisines';
 import { RestaurantCard } from '../components/RestaurantCard';
 import { Button, formatDistance, Price } from '../components/ui';
+import { usePro } from '../pro/purchases';
+import { DEFAULT_RADIUS_MILES, DIETARY_OPTIONS, RADIUS_OPTIONS_MILES, useSearchPrefs } from '../pro/searchPrefs';
 import { Coords, Cuisine, Restaurant, SortMode } from '../types';
 import { colors, radius } from '../theme';
+
+const METERS_PER_MILE = 1609.34;
 
 const SORT_OPTIONS: { mode: SortMode; label: string; description: string }[] = [
   { mode: 'rating', label: '★ Top rated', description: 'Sorted by Google rating, highest first' },
@@ -22,6 +26,8 @@ type Props = {
   usingFallbackLocation: boolean;
   onBack: () => void;
   onOpen: (r: Restaurant) => void;
+  /** Opens the paywall — passed down to each card's save heart. */
+  onPro: () => void;
   // Keeps results when returning from the details screen.
   cache: Restaurant[] | null;
   setCache: (r: Restaurant[]) => void;
@@ -31,10 +37,17 @@ type Props = {
   setFilter: (id: string | null) => void;
 };
 
-export function ResultsScreen({ cuisine, coords, usingFallbackLocation, onBack, onOpen, cache, setCache, sort, setSort, filter, setFilter }: Props) {
+export function ResultsScreen({ cuisine, coords, usingFallbackLocation, onBack, onOpen, onPro, cache, setCache, sort, setSort, filter, setFilter }: Props) {
+  const { isPro } = usePro();
+  const { dietary, setDietary, radiusMiles, setRadiusMiles } = useSearchPrefs();
+  const radiusMeters = isPro ? radiusMiles * METERS_PER_MILE : DEFAULT_RADIUS_METERS;
+  const dietaryQuery = isPro ? DIETARY_OPTIONS.find((d) => d.id === dietary)?.query ?? null : null;
   const [tab, setTab] = useState<'list' | 'map'>('list');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [results, setResults] = useState<Restaurant[] | null>(cache);
   const browsing = cuisine === null;
+  const activeFilterCount =
+    (browsing && filter ? 1 : 0) + (dietary ? 1 : 0) + (radiusMiles !== DEFAULT_RADIUS_MILES ? 1 : 0);
   const items = useMemo(() => {
     if (!results) return null;
     const shown = browsing && filter ? results.filter((r) => r.cuisineId === filter) : results;
@@ -47,9 +60,11 @@ export function ResultsScreen({ cuisine, coords, usingFallbackLocation, onBack, 
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchList = useCallback(
-    (force: boolean) =>
-      cuisine ? searchRestaurants(cuisine, coords, { force }) : searchAllRestaurants(coords, { force }),
-    [cuisine, coords],
+    (force: boolean) => {
+      const opts = { force, dietary: dietaryQuery, radiusMeters };
+      return cuisine ? searchRestaurants(cuisine, coords, opts) : searchAllRestaurants(coords, opts);
+    },
+    [cuisine, coords, dietaryQuery, radiusMeters],
   );
 
   const load = useCallback(async () => {
@@ -82,6 +97,19 @@ export function ResultsScreen({ cuisine, coords, usingFallbackLocation, onBack, 
     if (!cache) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Dietary filter and radius are query-changing (unlike sort/cuisine-filter, which only
+  // re-sort what's already loaded), so changing either re-fetches. Skips the first run,
+  // since the effect above already covers the initial load.
+  const isFirstPrefs = useRef(true);
+  useEffect(() => {
+    if (isFirstPrefs.current) {
+      isFirstPrefs.current = false;
+      return;
+    }
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dietaryQuery, radiusMeters]);
 
   const fitMap = () => {
     if (!items?.length) return;
@@ -133,28 +161,111 @@ export function ResultsScreen({ cuisine, coords, usingFallbackLocation, onBack, 
             );
           })}
         </ScrollView>
-        {browsing && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sorts}>
-            {[null, ...CUISINES].map((c) => {
-              const active = (c?.id ?? null) === filter;
-              return (
-                <Pressable
-                  key={c?.id ?? 'all'}
-                  onPress={() => setFilter(c?.id ?? null)}
-                  style={[styles.sortChip, active && styles.filterChipActive]}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                >
-                  <Text style={[styles.sortText, active && styles.sortTextActive]}>
-                    {c ? `${c.emoji} ${c.label}` : 'All'}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        )}
+        <Pressable onPress={() => setFiltersOpen(true)} style={({ pressed }) => [styles.filtersBtn, pressed && { opacity: 0.85 }]}>
+          <Text style={styles.filtersBtnText}>🔍 Filters</Text>
+          {activeFilterCount > 0 && (
+            <View style={styles.filterBadge}>
+              <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
+            </View>
+          )}
+        </Pressable>
         {isDemoMode && <Text style={styles.demo}>Demo data · add a Google API key to see real restaurants</Text>}
       </View>
+
+      <Modal visible={filtersOpen} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setFiltersOpen(false)}>
+        <SafeAreaView style={styles.sheet} edges={['top', 'bottom']}>
+          <View style={styles.sheetHeader}>
+            <Text style={styles.sheetTitle}>Filters</Text>
+            <Pressable onPress={() => setFiltersOpen(false)} hitSlop={10}>
+              <Text style={styles.sheetDone}>Done</Text>
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+            {browsing && (
+              <>
+                <Text style={styles.sheetSection}>Food type</Text>
+                <View style={styles.chipGrid}>
+                  {[null, ...CUISINES].map((c) => {
+                    const active = (c?.id ?? null) === filter;
+                    return (
+                      <Pressable
+                        key={c?.id ?? 'all'}
+                        onPress={() => setFilter(c?.id ?? null)}
+                        style={[styles.sortChip, active && styles.filterChipActive]}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: active }}
+                      >
+                        <Text style={[styles.sortText, active && styles.sortTextActive]}>
+                          {c ? `${c.emoji} ${c.label}` : 'All'}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+
+            <Text style={styles.sheetSection}>Dietary</Text>
+            <View style={styles.chipGrid}>
+              {[null, ...DIETARY_OPTIONS].map((d) => {
+                const active = (d?.id ?? null) === dietary;
+                const locked = !isPro && d !== null;
+                return (
+                  <Pressable
+                    key={d?.id ?? 'any'}
+                    onPress={() => (locked ? onPro() : setDietary(d?.id ?? null))}
+                    style={[styles.sortChip, active && styles.sortChipActive]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={locked ? `${d.label}, Pro feature` : undefined}
+                  >
+                    <Text style={[styles.sortText, active && styles.sortTextActive]}>
+                      {d ? `${d.emoji} ${d.label}` : '🍴 Any diet'}
+                      {locked ? ' 🔒' : ''}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={styles.sheetSection}>Distance</Text>
+            <View style={styles.chipGrid}>
+              {RADIUS_OPTIONS_MILES.map((mi) => {
+                const active = mi === radiusMiles;
+                const locked = !isPro && mi !== radiusMiles;
+                return (
+                  <Pressable
+                    key={mi}
+                    onPress={() => (locked ? onPro() : setRadiusMiles(mi))}
+                    style={[styles.sortChip, active && styles.sortChipActive]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={locked ? `${mi} miles, Pro feature` : undefined}
+                  >
+                    <Text style={[styles.sortText, active && styles.sortTextActive]}>
+                      📍 {mi} mi{locked ? ' 🔒' : ''}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {activeFilterCount > 0 && (
+              <Pressable
+                onPress={() => {
+                  setFilter(null);
+                  setDietary(null);
+                  setRadiusMiles(DEFAULT_RADIUS_MILES);
+                }}
+                style={{ marginTop: 24, alignSelf: 'center' }}
+                hitSlop={8}
+              >
+                <Text style={styles.clearFilters}>Clear all filters</Text>
+              </Pressable>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
 
       {error ? (
         <View style={styles.center}>
@@ -188,7 +299,13 @@ export function ResultsScreen({ cuisine, coords, usingFallbackLocation, onBack, 
           onRefresh={isDemoMode ? undefined : refresh}
           contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
           renderItem={({ item, index }) => (
-            <RestaurantCard restaurant={item} rank={index + 1} cuisine={cuisineById(item.cuisineId)} onPress={() => onOpen(item)} />
+            <RestaurantCard
+              restaurant={item}
+              rank={index + 1}
+              cuisine={cuisineById(item.cuisineId)}
+              onPress={() => onOpen(item)}
+              onLockedFavorite={onPro}
+            />
           )}
           ListFooterComponent={<Text style={styles.attrib}>Ratings, reviews & photos from Google</Text>}
         />
@@ -248,6 +365,37 @@ const styles = StyleSheet.create({
   sortText: { fontWeight: '700', color: colors.ink, fontSize: 13 },
   filterChipActive: { backgroundColor: colors.navy, borderColor: colors.navy },
   sortTextActive: { color: '#fff' },
+  filtersBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.card,
+  },
+  filtersBtnText: { fontWeight: '700', color: colors.ink, fontSize: 13 },
+  filterBadge: { backgroundColor: colors.orange, borderRadius: radius.pill, minWidth: 18, height: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  filterBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  sheet: { flex: 1, backgroundColor: colors.cream },
+  sheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  sheetTitle: { fontSize: 20, fontWeight: '900', color: colors.ink },
+  sheetDone: { color: colors.orange, fontWeight: '800', fontSize: 16 },
+  sheetSection: { fontSize: 13, fontWeight: '800', letterSpacing: 1, color: colors.muted, textTransform: 'uppercase', marginTop: 20, marginBottom: 10 },
+  chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  clearFilters: { color: colors.red, fontWeight: '700', fontSize: 14 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24 },
   error: { color: colors.red, textAlign: 'center' },
   attrib: { textAlign: 'center', color: colors.muted, fontSize: 12, marginTop: 6 },

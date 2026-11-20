@@ -2,12 +2,29 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SpinWheel, SpinWheelHandle } from '../components/SpinWheel';
+import { ThemePicker } from '../components/ThemePicker';
 import { Button } from '../components/ui';
+import { usePro } from '../pro/purchases';
+import { useWheelTheme } from '../pro/wheelThemeContext';
+import { useFavorites } from '../pro/favorites';
 import { Cuisine } from '../types';
 import { colors, radius, shadow } from '../theme';
 
 /** onFindPlaces(null) means browse every cuisine without spinning. */
-export function HomeScreen({ onFindPlaces, onBattle }: { onFindPlaces: (c: Cuisine | null) => void; onBattle: () => void }) {
+export function HomeScreen({
+  onFindPlaces,
+  onBattle,
+  onPro,
+  onFavorites,
+}: {
+  onFindPlaces: (c: Cuisine | null) => void;
+  onBattle: () => void;
+  onPro: () => void;
+  onFavorites: () => void;
+}) {
+  const { isPro } = usePro();
+  const { theme } = useWheelTheme();
+  const { addHistory } = useFavorites();
   const { width, height } = useWindowDimensions();
   const wheelSize = Math.min(width - 48, height * 0.46, 380);
   const wheel = useRef<SpinWheelHandle>(null);
@@ -26,12 +43,21 @@ export function HomeScreen({ onFindPlaces, onBattle }: { onFindPlaces: (c: Cuisi
       <View style={styles.header}>
         <Text style={styles.title}>Spin to Dine</Text>
         <Text style={styles.subtitle}>Can't decide? Let the wheel pick.</Text>
+        <Pressable onPress={onFavorites} hitSlop={10} style={({ pressed }) => [styles.favBadge, pressed && { opacity: 0.7 }]}>
+          <Text style={styles.favBadgeText}>Favorites</Text>
+        </Pressable>
+        <View style={styles.topRow}>
+          <Pressable onPress={onPro} hitSlop={10} style={({ pressed }) => [styles.proBadge, pressed && { opacity: 0.7 }]}>
+            <Text style={styles.proBadgeText}>{isPro ? '⭐ Pro' : '⭐ Go Pro'}</Text>
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.wheelArea}>
         <SpinWheel
           ref={wheel}
           size={wheelSize}
+          theme={theme}
           onSpinStart={() => {
             setSpinning(true);
             setResult(null);
@@ -39,8 +65,15 @@ export function HomeScreen({ onFindPlaces, onBattle }: { onFindPlaces: (c: Cuisi
           onResult={(c) => {
             setSpinning(false);
             setResult(c);
+            // Recorded regardless of Pro status, so history is already there once unlocked.
+            addHistory(c.id);
           }}
         />
+        {!spinning && !result && (
+          <View style={styles.themeRow}>
+            <ThemePicker onLockedPress={onPro} />
+          </View>
+        )}
       </View>
 
       <View style={styles.bottom}>
@@ -90,9 +123,32 @@ export function HomeScreen({ onFindPlaces, onBattle }: { onFindPlaces: (c: Cuisi
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.cream },
   header: { alignItems: 'center', paddingTop: 12 },
+  topRow: { position: 'absolute', top: 10, right: 16, flexDirection: 'row', gap: 8, alignItems: 'center' },
+  favBadge: {
+    position: 'absolute',
+    top: 10,
+    left: 16,
+    backgroundColor: colors.card,
+    borderRadius: radius.pill,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    ...shadow,
+    shadowOpacity: 0.08,
+  },
+  favBadgeText: { color: colors.navy, fontWeight: '800', fontSize: 13 },
+  proBadge: {
+    backgroundColor: colors.card,
+    borderRadius: radius.pill,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    ...shadow,
+    shadowOpacity: 0.08,
+  },
+  proBadgeText: { color: colors.navy, fontWeight: '800', fontSize: 13 },
   title: { fontSize: 34, fontWeight: '900', color: colors.red, letterSpacing: -0.5 },
   subtitle: { fontSize: 16, color: colors.muted, marginTop: 2 },
   wheelArea: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  themeRow: { marginTop: 22 },
   bottom: { paddingHorizontal: 20, paddingBottom: 16, minHeight: 210, justifyContent: 'flex-end' },
   idle: { alignItems: 'center', gap: 12 },
   browse: { alignSelf: 'center', paddingVertical: 10, marginTop: 6 },
