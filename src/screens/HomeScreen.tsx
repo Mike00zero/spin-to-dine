@@ -43,10 +43,10 @@ export function HomeScreen({
       <View style={styles.header}>
         <Text style={styles.title}>Spin to Dine</Text>
         <Text style={styles.subtitle}>Can't decide? Let the wheel pick.</Text>
+        <Pressable onPress={onFavorites} hitSlop={10} style={({ pressed }) => [styles.favBadge, pressed && { opacity: 0.7 }]}>
+          <Text style={styles.favBadgeText}>Favorites</Text>
+        </Pressable>
         <View style={styles.topRow}>
-          <Pressable onPress={onFavorites} hitSlop={10} style={({ pressed }) => [styles.iconBadge, pressed && { opacity: 0.7 }]}>
-            <Text style={styles.iconBadgeText}>❤️</Text>
-          </Pressable>
           <Pressable onPress={onPro} hitSlop={10} style={({ pressed }) => [styles.proBadge, pressed && { opacity: 0.7 }]}>
             <Text style={styles.proBadgeText}>{isPro ? '⭐ Pro' : '⭐ Go Pro'}</Text>
           </Pressable>
@@ -124,17 +124,18 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.cream },
   header: { alignItems: 'center', paddingTop: 12 },
   topRow: { position: 'absolute', top: 10, right: 16, flexDirection: 'row', gap: 8, alignItems: 'center' },
-  iconBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  favBadge: {
+    position: 'absolute',
+    top: 10,
+    left: 16,
     backgroundColor: colors.card,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: radius.pill,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     ...shadow,
     shadowOpacity: 0.08,
   },
-  iconBadgeText: { fontSize: 15 },
+  favBadgeText: { color: colors.navy, fontWeight: '800', fontSize: 13 },
   proBadge: {
     backgroundColor: colors.card,
     borderRadius: radius.pill,

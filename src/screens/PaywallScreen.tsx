@@ -50,8 +50,10 @@ export function PaywallScreen({ onBack }: { onBack: () => void }) {
 
       <ScrollView contentContainerStyle={styles.body}>
         <Text style={styles.kicker}>⭐ SPIN TO DINE PRO</Text>
-        <Text style={styles.title}>Unlock everything</Text>
-        <Text style={styles.lead}>One payment. No subscription. Yours forever.</Text>
+        <Text style={styles.title}>{isPro ? 'Thank you for supporting' : 'Unlock everything'}</Text>
+        <Text style={styles.lead}>
+          {isPro ? 'Your purchase helps keep Spin to Dine going. Enjoy these Pro features.' : 'One payment. No subscription. Yours forever.'}
+        </Text>
 
         <View style={styles.card}>
           {FEATURES.map((f) => (
@@ -59,7 +61,7 @@ export function PaywallScreen({ onBack }: { onBack: () => void }) {
               <Text style={styles.featureEmoji}>{f.emoji}</Text>
               <View style={{ flex: 1 }}>
                 <Text style={styles.featureTitle}>{f.title}</Text>
-                <Text style={styles.featureBlurb}>{f.blurb}</Text>
+                <Text style={styles.featureBlurb}>{isPro ? 'You have access to this feature.' : f.blurb}</Text>
               </View>
             </View>
           ))}
